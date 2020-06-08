@@ -87,7 +87,7 @@ class MultiHeadAttention(tf.keras.Model):
         for head in self.attentionheads:
             attention.append(head(query, key, value))
             
-        attention = tf.concat(attention, axis=0)
+        attention = tf.concat(attention, axis=-1)
         
         #apply the final linear transformation
         dense = self.dense(attention)
@@ -232,8 +232,9 @@ class EncoderLayer(tf.keras.Model):
         self.attention = MultiHeadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
         self.attentionnorm = SublayerNorm(d_model=d_model, dropout=dropout)
         
-        self.dense = tf.keras.layers.Dense(units=d_ff)
-        self.densenorm = SublayerNorm(d_model=d_model, dropout=dropout)
+        self.feedforward = tf.keras.models.Sequential([tf.keras.layers.Dense(units=d_ff, activation=tf.nn.relu),
+                                                       tf.keras.layers.Dense(units=d_model)])
+        self.ffnorm = SublayerNorm(d_model=d_model, dropout=dropout)
         
     def call(self, x):
         '''
@@ -247,8 +248,8 @@ class EncoderLayer(tf.keras.Model):
         attention = self.attention(x, x, x)
         attentionnorm = self.attentionnorm(x, attention)
         
-        dense = self.dense(attentionnorm)
-        encoded = self.densenorm(dense)
+        feedforward = self.feedforward(attentionnorm)
+        encoded = self.ffnorm(x, feedforward)
         
         return encoded
     
@@ -311,11 +312,14 @@ class DecoderLayer(tf.keras.Model):
         self.attention = MultiHeadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
         self.attentionnorm = SublayerNorm(d_model=d_model, dropout=dropout)
         
-        self.encoderattention = MultiHeadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
+        self.enc
+Out[4]:
+oderattention = MultiHeadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
         self.encoderattentionnorm = SublayerNorm(d_model=d_model, dropout=dropout)
 
-        self.dense = tf.keras.layers.Dense(units=d_ff)
-        self.densenorm = SublayerNorm(d_model=d_model, dropout=dropout)
+        self.feedforward = tf.keras.models.Sequential([tf.keras.layers.Dense(units=d_ff, activation=tf.nn.relu),
+                                                       tf.keras.layers.Dense(units=d_model)])
+        self.ffnorm = SublayerNorm(d_model=d_model, dropout=dropout)
         
     def call(self, x, encoding):
         '''
@@ -334,8 +338,8 @@ class DecoderLayer(tf.keras.Model):
         encoderattention = self.encoderattention(encoding, encoding, attentionnorm)
         encoderattentionnorm = self.encoderattentionnorm(attentionnorm, encoderattention)
         
-        dense = self.dense(encoderattentionnorm)
-        decoding = self.densenorm(dense)
+        feedforward = self.feedforward(encoderattentionnorm)
+        decoding = self.ffnorm(encoderattentionnorm, feedforward)
         
         return decoding
 
@@ -361,3 +365,40 @@ class Embedding(tf.keras.Model):
                         Shape: [batch, seq_length, embedding_dim]
         '''
         return self.dense(x)
+    
+class DecodeEmbedding(tf.keras.Model):
+    '''
+    A simple decoding transformation for the embedding layer. Takes the d_model embedding and returns it to the
+    dimensionality of the original input with an affine transformation.
+    
+    param input_dim: (Int) dimension to project onto
+    '''
+    
+    def __init__(self, input_dim=7):
+        super(DecodeEmbedding, self).__init__()
+        
+        self.dense = tf.keras.layers.Dense(units=input_dim)
+        
+    def call(self, x):
+        
+        return self.dense(x)
+    
+    
+class MLP(tf.keras.Model):
+    '''
+    Multi-layer perceptron used to interpret the decoded transformer output
+    '''
+    
+    def __init__(self):
+        super(MLP, self).__init__()
+        
+        self.hidden = tf.keras.model.Sequential([tf.keras.layers.Dense(units=1024, activation=tf.nn.relu),
+                                                 tf.keras.layers.Dense(units=512, activation=tf.nn.tanh)])
+        
+        self.output = DecodeEmbedding()
+        
+    def call(self, x):
+        
+        hidden = self.hidden(x)
+        
+        return self.output(hidden)
